@@ -7,18 +7,15 @@ function show_unrolling(data_path, model, Xμ, Xσ, save_path)
 	n_points = length(data["solution"][1])
 
 	X = zeros(Float32, n_points, 1, n_steps)
-	y = zeros(Float32, n_points, 1, n_steps)
 	for t in 1:n_steps
 	    X[:,:,t] .= data["solution"][t]
-	    y[:,:,t] .= data["solution"][t+1]
 	end
 
-	X = (X .- Xμ) ./ Xσ
-	y = (y .- Xμ) ./ Xσ
+	X_norm = (X .- Xμ) ./ Xσ
 
 	output_times = data["times"][2:end]
 	output_x = data["grid"]
-	x0 = X[:,:,1]
+	x0 = X_norm[:,:,1]
 
 	x = reshape(x0, size(x0, 1), size(x0, 2), 1)
     y_unroll = zeros(Float32, size(x0, 1), size(x0, 2), n_times)
@@ -28,6 +25,8 @@ function show_unrolling(data_path, model, Xμ, Xσ, save_path)
       	x = model(x)
         y_unroll[:,:,t+1] .= x
     end
+
+    y_unroll = (y_unroll .* Xσ) .+ Xμ
 
     begin
 	    anim = @animate for i in 1:length(output_times)
@@ -46,18 +45,15 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
 	n_points = length(data["solution"][1])
 
 	X = zeros(Float32, n_points, 1, n_steps)
-	y = zeros(Float32, n_points, 1, n_steps)
 	for t in 1:n_steps
 	    X[:,:,t] .= data["solution"][t]
-	    y[:,:,t] .= data["solution"][t+1]
 	end
 
-	X = (X .- Xμ) ./ Xσ
-	y = (y .- Xμ) ./ Xσ
+	X_norm = (X .- Xμ) ./ Xσ
 
 	output_times = data["times"][2:end]
 	output_x = data["grid"]
-	x0 = X[:,:,1]
+	x0 = X_norm[:,:,1]
 
 	x = reshape(x0, size(x0, 1), size(x0, 2), 1)
     y_unroll = zeros(Float32, size(x0, 1), size(x0, 2), n_times)
@@ -67,6 +63,8 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
       	x = model(x)
         y_unroll[:,:,t+1] .= x
     end
+
+    y_unroll = (y_unroll .* Xσ) .+ Xμ
 
     errors = zeros(n_steps)
 	data_masses = zeros(n_steps)
