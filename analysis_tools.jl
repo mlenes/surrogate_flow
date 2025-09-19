@@ -1,4 +1,5 @@
-using JLD2, Plots, Statistics
+using JLD2, Plots, Statistics, Lux, Reactant, Enzyme, Optimisers, MLUtils, Random, NNlib
+include("models.jl")
 
 function show_unrolling(data_path, model, Xμ, Xσ, save_path)
 	data = load(data_path)
@@ -52,7 +53,6 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
 	X_norm = (X .- Xμ) ./ Xσ
 
 	output_times = data["times"][2:end]
-	output_x = data["grid"]
 	x0 = X_norm[:,:,1]
 
 	x = reshape(x0, size(x0, 1), size(x0, 2), 1)

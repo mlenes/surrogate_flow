@@ -4,7 +4,7 @@ struct BaseModel <: Lux.AbstractLuxLayer
     core::Any
 end
 
-function BaseModel(n_fiter, n_in, n_hidden, n_out)
+function BaseModel(n_filter, n_in, n_hidden, n_out)
     n_pad = n_filter ÷ 2
 
     model_flux = Chain(
@@ -82,6 +82,3 @@ Lux.initialparameters(rng::AbstractRNG, m::FluxModel) = Lux.initialparameters(rn
 Lux.initialstates(rng::AbstractRNG, m::FluxModel) = Lux.initialstates(rng, m.core)
 
 (m::FluxModel)(x, ps, st) = m.core(x, ps, st)
-
-
-
