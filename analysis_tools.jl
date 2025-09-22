@@ -82,3 +82,35 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
 	savefig(fig, save_path);
 	display(fig)
 end
+
+function periodic_interp(u, x_grid, xq, Δx, L)
+    N = length(x_grid)
+    x0 = x_grid[1]
+
+    # wrap queries
+    xq_wrapped = (xq .- x0) .% L .+ x0
+
+    # fractional index
+    idxf = (xq_wrapped .- x0) ./ Δx .+ 1
+
+    # left and right indices
+    i0 = floor.(Int, idxf)
+    i1 = i0 .+ 1
+    t  = idxf .- i0
+
+    # wrap into 1:N
+    i0 = mod.(i0 .- 1, N) .+ 1
+    i1 = mod.(i1 .- 1, N) .+ 1
+
+    return Float32.((1 .- t) .* u[i0] .+ t .* u[i1])
+end
+
+function preprocess(u, x_grid, Δx, L, λ)
+    xq = x_grid .* λ
+    λ .* periodic_interp(u, x_grid, xq, Δx, L)
+end
+
+function postprocess(w, x_grid, Δx, L, λ)
+    xq = x_grid ./ λ
+    (1/λ) .* periodic_interp(w, x_grid, xq, Δx, L)
+end
