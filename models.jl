@@ -7,7 +7,7 @@ end
 function BaseModel(n_filter, n_in, n_hidden, n_out)
     n_pad = n_filter ÷ 2
 
-    model_flux = Chain(
+    core = Chain(
         WrappedFunction(x -> pad_circular(x, n_pad; dims=1)),
         Conv((n_filter,), n_in=>n_hidden, swish),
         
@@ -21,7 +21,9 @@ function BaseModel(n_filter, n_in, n_hidden, n_out)
         Conv((n_filter,), n_hidden=>n_out)
     )
 
-    return BaseModel(n_pad, SkipConnection(model_flux, +))
+
+
+    return BaseModel(n_pad, SkipConnection(core, +))
 end
 
 Lux.initialparameters(rng::AbstractRNG, m::BaseModel) = Lux.initialparameters(rng, m.core)
