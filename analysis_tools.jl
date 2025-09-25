@@ -1,4 +1,4 @@
-using JLD2, Plots, Statistics, Lux, Reactant, Enzyme, Optimisers, MLUtils, Random, NNlib
+using JLD2, Plots, Statistics, Lux, Reactant, Enzyme, Optimisers, MLUtils, Random, NNlib, StatsPlots, LinearAlgebra
 include("models.jl")
 
 function show_unrolling(data_path, model, Xμ, Xσ, save_path)
@@ -79,38 +79,82 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
 	p1 = plot(output_times, data_masses, xlabel="Time", ylabel="Mass", label="Target")
 	plot!(p1, output_times, unrolled_masses, label="Unrolled", title="Mass conservation of Target and Unrolled prediction")
 	fig = plot(p0, p1, layout=(2,1), size=(800,800))
-	savefig(fig, save_path);
+	savefig(fig, save_path)
 	display(fig)
 end
 
-function periodic_interp(u, x_grid, xq, Δx, L)
-    N = length(x_grid)
-    x0 = x_grid[1]
-
-    # wrap queries
-    xq_wrapped = (xq .- x0) .% L .+ x0
-
-    # fractional index
-    idxf = (xq_wrapped .- x0) ./ Δx .+ 1
-
-    # left and right indices
-    i0 = floor.(Int, idxf)
-    i1 = i0 .+ 1
-    t  = idxf .- i0
-
-    # wrap into 1:N
-    i0 = mod.(i0 .- 1, N) .+ 1
-    i1 = mod.(i1 .- 1, N) .+ 1
-
-    return Float32.((1 .- t) .* u[i0] .+ t .* u[i1])
+function full_jacobian_fd(model, u; ε=1e-6)
+    N = length(u)
+    J = zeros(Float32, N, N)
+    for j in 1:N
+        e = zeros(Float32, N); e[j] = 1.0f0
+        J[:, j] = (model(u .+ Float32(ε)*e) .- model(u)) ./ ε
+    end
+    return J
 end
 
-function preprocess(u, x_grid, Δx, L, λ)
-    xq = x_grid .* λ
-    λ .* periodic_interp(u, x_grid, xq, Δx, L)
+function show_spectral_density(model, datapath, Xμ, Xσ, savepath)
+	data = load(datapath)
+	output_times = data["times"]
+
+	begin
+		anim = @animate for t in 1:length(data["solution"])
+			u = (Float32.(reshape(data["solution"][t], :, 1, 1)) .- Xμ) ./ Xσ
+			J = full_jacobian_fd(model, u)
+			λ, v = eigen(J)
+			λ_max = maximum(abs.(λ))
+			λ_min = minimum(abs.(λ))
+			d = density(abs.(λ), xlabel="Abs(λ)", xticks=20, legend=:topright, ylim=(0,3), ylabel="Density", title="Eigenvalue Density t=$(round(output_times[t],digits=2))", label="Base, |λ|_max = $(round(λ_max, digits=3))", xlim=(0, 2))
+			fig = plot(d, size=(800,400))
+		end
+		gif(anim, savepath, fps=15)
+	end
 end
 
-function postprocess(w, x_grid, Δx, L, λ)
-    xq = x_grid ./ λ
-    (1/λ) .* periodic_interp(w, x_grid, xq, Δx, L)
+function show_max_perturbation(model, datapath, Xμ, Xσ, savepath)
+    data=load(datapath)
+    u0 = Float32.(reshape(data["solution"][1], :, 1, 1))
+    u0_norm = (u0 .- Xμ) ./ Xσ
+
+    J = full_jacobian_fd(model, u0_norm)
+    all_λ, all_v = eigen(J)
+
+    idx = argmax(abs.(all_λ))
+    λ = all_λ[40]
+    v = all_v[:, 40]
+
+    v_real = real(v); v_imag = imag(v)
+    v_pert = v_real .+ v_imag
+
+    ϵ = 1e-3
+    u_perturbed = Float32.(u0_norm .+ ϵ .* reshape(v_pert, :, 1 ,1 ))
+
+    T = length(data["solution"])
+    trajectory_ref = [u0_norm]
+    trajectory_pert = [u_perturbed]
+
+    u_ref = u0_norm
+    u_pert = u_perturbed
+
+    for t in 1:T
+        u_ref = model(u_ref)
+        u_pert = model(u_pert)
+
+        push!(trajectory_ref, u_ref)
+        push!(trajectory_pert, u_pert)
+    end
+
+    for i in 1:length(trajectory_ref)
+    	trajectory_ref[i] = (trajectory_ref[i] .* Xσ) .+ Xμ
+    	trajectory_pert[i] = (trajectory_pert[i] .* Xσ) .+ Xμ
+    end
+
+    begin
+        anim = @animate for i in 1:T
+            p1 = plot(data["grid"], vec(trajectory_ref[i]), xlabel="x", ylabel="u", label="Reference", legend=:topright, ylim=(minimum(u0), maximum(u0)), title="Perturbed by mode with |λ|=$(norm(λ)) at t=0")
+            plot!(data["grid"], vec(trajectory_pert[i]), label="Perturbed")
+            plot(p1, size=(800,400))
+        end
+        gif(anim, savepath, fps=15)
+    end
 end
