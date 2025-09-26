@@ -21,15 +21,13 @@ function BaseModel(n_filter, n_in, n_hidden, n_out)
         Conv((n_filter,), n_hidden=>n_out)
     )
 
-
-
     return BaseModel(n_pad, SkipConnection(core, +))
 end
 
 Lux.initialparameters(rng::AbstractRNG, m::BaseModel) = Lux.initialparameters(rng, m.core)
 Lux.initialstates(rng::AbstractRNG, m::BaseModel) = Lux.initialstates(rng, m.core)
 
-(m::BaseModel)(x, ps, st) = m.core(x, ps, st);
+(m::BaseModel)(x, ps, st) = m.core(x, ps, st)
 
 
 # Custom convolution layer with static kernel

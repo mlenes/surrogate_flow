@@ -120,8 +120,8 @@ function show_max_perturbation(model, datapath, Xμ, Xσ, savepath)
     all_λ, all_v = eigen(J)
 
     idx = argmax(abs.(all_λ))
-    λ = all_λ[40]
-    v = all_v[:, 40]
+    λ = all_λ[idx]
+    v = all_v[:, idx]
 
     v_real = real(v); v_imag = imag(v)
     v_pert = v_real .+ v_imag
