@@ -2,82 +2,130 @@ using JLD2, Plots, Statistics, Lux, Reactant, Enzyme, Optimisers, MLUtils, Rando
 include("models.jl")
 
 function show_unrolling(data_path, model, Xμ, Xσ, save_path)
-	data = load(data_path)
-	n_times = length(data["solution"])
-	n_steps = n_times-1
-	n_points = length(data["solution"][1])
+	data=load(data_path)
 
-	X = zeros(Float32, n_points, 1, n_steps)
-	for t in 1:n_steps
-	    X[:,:,t] .= data["solution"][t]
+	y_pred = zeros(length(data["solution"]), length(data["grid"]))
+	y_true = zeros(length(data["solution"]), length(data["grid"]))
+	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	y_true[1,:] = data["solution"][1]
+
+	for t in 2:length(data["solution"])
+	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
+	    
+	    y_pred[t,:] .= model(u_prev)[:,1,1]
+	    y_true[t,:] .= Float32.(data["solution"][t])
 	end
+	y_pred = y_pred .* Xσ .+ Xμ
 
-	X_norm = (X .- Xμ) ./ Xσ
-
-	output_times = data["times"][2:end]
-	output_x = data["grid"]
-	x0 = X_norm[:,:,1]
-
-	x = reshape(x0, size(x0, 1), size(x0, 2), 1)
-    y_unroll = zeros(Float32, size(x0, 1), size(x0, 2), n_times)
-    y_unroll[:,:,1] .= x0
-    
-    for t in 1:(n_times-1)
-      	x = model(x)
-        y_unroll[:,:,t+1] .= x
-    end
-
-    y_unroll = (y_unroll .* Xσ) .+ Xμ
-
-    begin
-	    anim = @animate for i in 1:length(output_times)
-	        p1 = plot(output_x, X[:,1,i], xlabel="X", ylabel="u", label="target u(t=$(round(output_times[i],digits=2)))")
-	        plot!(output_x, y_unroll[:,1,i], label="Unrolled estimate", linestyle=:dash, legend=:topright, ylim=(minimum(X),maximum(X)))
-	        plot(p1, size=(800,400))
+	output_grid = data["grid"]
+	output_times = data["times"]
+	begin
+	    anim = @animate for t in 1:length(output_times)
+	        p = plot(output_grid, y_true[t,:], xlabel="x", ylabel="u", label="target u(t=$(round(output_times[t],digits=2)))")
+	        plot!(p, output_grid, y_pred[t,:], label="Unrolled estimate", linestyle=:dash, legend=:topright, ylim=(minimum(y_true), maximum(y_true)))
+	        plot(p, size=(800,400))
 	    end
 	    gif(anim, save_path, fps=15)
-	end 
+	end
+end
+
+function show_unrolling_Δt(data_path, model, Xμ, Xσ, save_path)
+	data=load(data_path)
+	Δt=Float32.(reshape([data["dt_out"]],1,1))
+
+	y_pred = zeros(length(data["solution"]), length(data["grid"]))
+	y_true = zeros(length(data["solution"]), length(data["grid"]))
+	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	y_true[1,:] = data["solution"][1]
+
+	for t in 2:length(data["solution"])
+	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
+	    
+	    y_pred[t,:] .= model((u_prev, Δt))[:,1,1]
+	    y_true[t,:] .= Float32.(data["solution"][t])
+	end
+	y_pred = y_pred .* Xσ .+ Xμ
+
+	output_grid = data["grid"]
+	output_times = data["times"]
+	begin
+	    anim = @animate for t in 1:length(output_times)
+	        p = plot(output_grid, y_true[t,:], xlabel="x", ylabel="u", label="target u(t=$(round(output_times[t],digits=2)))")
+	        plot!(p, output_grid, y_pred[t,:], label="Unrolled estimate", linestyle=:dash, legend=:topright, ylim=(minimum(y_true), maximum(y_true)))
+	        plot(p, size=(800,400))
+	    end
+	    gif(anim, save_path, fps=15)
+	end
 end
 
 function show_plots(data_path, model, Xμ, Xσ, save_path)
-	data = load(data_path)
-	n_times = length(data["solution"])
-	n_steps = n_times-1
-	n_points = length(data["solution"][1])
+	data=load(data_path)
 
-	X = zeros(Float32, n_points, 1, n_steps)
-	for t in 1:n_steps
-	    X[:,:,t] .= data["solution"][t]
+	y_pred = zeros(length(data["solution"]), length(data["grid"]))
+	y_true = zeros(length(data["solution"]), length(data["grid"]))
+	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	y_true[1,:] = data["solution"][1]
+
+	for t in 2:length(data["solution"])
+	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
+	    
+	    y_pred[t,:] .= model(u_prev)[:,1,1]
+	    y_true[t,:] .= Float32.(data["solution"][t])
 	end
+	y_pred = y_pred .* Xσ .+ Xμ
 
-	X_norm = (X .- Xμ) ./ Xσ
+	output_grid = data["grid"]
+	output_times = data["times"]
 
-	output_times = data["times"][2:end]
-	x0 = X_norm[:,:,1]
-
-	x = reshape(x0, size(x0, 1), size(x0, 2), 1)
-    y_unroll = zeros(Float32, size(x0, 1), size(x0, 2), n_times)
-    y_unroll[:,:,1] .= x0
-    
-    for t in 1:(n_times-1)
-      	x = model(x)
-        y_unroll[:,:,t+1] .= x
-    end
-
-    y_unroll = (y_unroll .* Xσ) .+ Xμ
-
-    errors = zeros(n_steps)
-	data_masses = zeros(n_steps)
-	unrolled_masses = zeros(n_steps)
-	for i in 1:n_steps
-	    errors[i] = mean(abs2, y_unroll[:,1,i] .- X[:,1,i])
-	    data_masses[i] = sum(X[:,1,i])
-	    unrolled_masses[i] = sum(y_unroll[:,1,i])
+    errors = zeros(length(output_times))
+	true_masses = zeros(length(output_times))
+	pred_masses = zeros(length(output_times))
+	for i in 1:length(output_times)
+	    errors[i] = mean(abs2, y_pred[i,:] .- y_true[i,:])
+	    true_masses[i] = sum(y_true[i,:])
+	    pred_masses[i] = sum(y_pred[i,:])
 	end
 
 	p0 = plot(output_times, errors, xlabel="Time", ylabel="Error", label="MSE", title="Mean Squared Error in unrolled velocity")
-	p1 = plot(output_times, data_masses, xlabel="Time", ylabel="Mass", label="Target")
-	plot!(p1, output_times, unrolled_masses, label="Unrolled", title="Mass conservation of Target and Unrolled prediction")
+	p1 = plot(output_times, true_masses, xlabel="Time", ylabel="Mass", label="Target")
+	plot!(p1, output_times, pred_masses, label="Unrolled", title="Mass conservation of Target and Unrolled prediction")
+	fig = plot(p0, p1, layout=(2,1), size=(800,800))
+	savefig(fig, save_path)
+	display(fig)
+end
+
+function show_plots_Δt(data_path, model, Xμ, Xσ, save_path)
+	data=load(data_path)
+	Δt=Float32.(reshape([data["dt_out"]],1,1))
+
+	y_pred = zeros(length(data["solution"]), length(data["grid"]))
+	y_true = zeros(length(data["solution"]), length(data["grid"]))
+	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	y_true[1,:] = data["solution"][1]
+
+	for t in 2:length(data["solution"])
+	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
+	    
+	    y_pred[t,:] .= model((u_prev, Δt))[:,1,1]
+	    y_true[t,:] .= Float32.(data["solution"][t])
+	end
+	y_pred = y_pred .* Xσ .+ Xμ
+
+	output_grid = data["grid"]
+	output_times = data["times"]
+
+    errors = zeros(length(output_times))
+	true_masses = zeros(length(output_times))
+	pred_masses = zeros(length(output_times))
+	for i in 1:length(output_times)
+	    errors[i] = mean(abs2, y_pred[i,:] .- y_true[i,:])
+	    true_masses[i] = sum(y_true[i,:])
+	    pred_masses[i] = sum(y_pred[i,:])
+	end
+
+	p0 = plot(output_times, errors, xlabel="Time", ylabel="Error", label="MSE", title="Mean Squared Error in unrolled velocity")
+	p1 = plot(output_times, true_masses, xlabel="Time", ylabel="Mass", label="Target")
+	plot!(p1, output_times, pred_masses, label="Unrolled", title="Mass conservation of Target and Unrolled prediction")
 	fig = plot(p0, p1, layout=(2,1), size=(800,800))
 	savefig(fig, save_path)
 	display(fig)
@@ -157,4 +205,36 @@ function show_max_perturbation(model, datapath, Xμ, Xσ, savepath)
         end
         gif(anim, savepath, fps=15)
     end
+end
+
+function generate_datasets(trainpaths, truthpaths, pairs_per_set)
+	n_data = pairs_per_set * length(trainpaths)
+	n_points = length(load(trainpaths[1])["grid"])
+
+	X = zeros(Float32, n_points, 1, n_data)
+	Δt = zeros(Float32, 1, n_data)
+	y = zeros(Float32, n_points, 1, n_data)
+
+	count = 1
+	for i in 1:length(trainpaths)
+		X_data = load(trainpaths[i])
+		y_data = load(truthpaths[i])
+
+		n_times = length(X_data["times"])
+		pair_times = rand(1:n_times-1, pairs_per_set)
+		
+		for t in pair_times
+			X[:,:,count] .= X_data["solution"][t]
+			Δt[:,count] .= X_data["dt_out"]
+
+			y[:,:,count] .= y_data["solution"][t+1]
+			count+=1
+		end
+	end
+
+	Xμ, Xσ = mean(X), std(X)
+	X = (X .- Xμ) ./ Xσ
+	y = (y .- Xμ) ./ Xσ
+
+	return (X, Δt), y, Xμ, Xσ
 end
