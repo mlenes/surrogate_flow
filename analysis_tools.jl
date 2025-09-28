@@ -238,3 +238,86 @@ function generate_datasets(trainpaths, truthpaths, pairs_per_set)
 
 	return (X, Δt), y, Xμ, Xσ
 end
+
+function burgers_FV(nx, L, ν, k, u_mean, u_amplitude, noise_strength, t_end, cfl; nt=10000)
+	Δx=L/nx
+	x=range(Δx/2, L - Δx/2, length=nx)
+
+	u0(x) = u_mean .+ u_amplitude.*cos.(x*k*pi/L)
+	Δt=t_end/nt
+
+	function convective_flux(u)
+	    n = length(u)
+	    flux = zeros(n)
+
+	    u_prev = circshift(u, 1)
+	    u_next = circshift(u, -1)
+
+	    for i in 1:n
+	        uL = u[i]
+	        uR = u_next[i]
+
+	        alpha = max(abs(uL), abs(uR))
+	        flux_LR = 0.25*(uL^2 + uR^2) - 0.5*alpha*(uR-uL)
+
+	        uL_prev = u_prev[i]
+	        uR_prev = u[i]
+
+	        alpha_prev = max(abs(uL_prev), abs(uR_prev))
+	        flux_prev = 0.25*(uL_prev^2 + uR_prev^2) - 0.5*alpha_prev*(uR_prev - uL_prev)
+	        
+	        flux[i] = (-1/Δx) * (flux_LR - flux_prev)
+	    end
+
+	    return flux
+	end
+
+	function diffusive_flux(u)
+	    n = length(u)
+	    flux = zeros(n)
+
+	    u_prev = circshift(u, 1)
+	    u_next = circshift(u, -1)
+
+	    for i in 1:n
+	        flux[i] = (ν/Δx^2) * (u_prev[i] - 2u[i] + u_next[i])
+	    end
+
+	    return flux
+	end
+
+	R(u) = convective_flux(u) .+ diffusive_flux(u)
+
+	function rk3_step(u, Δt)
+	    k1 = R(u)
+	    u1 = u .+ Δt .* k1
+
+	    k2 = R(u1)
+	    u2 = 0.75*u .+ 0.25*(u1 .+ Δt .* k2)
+
+	    k3 = R(u2)
+	    u_next = (1/3)*u .+ (2/3)*(u2 .+ Δt .* k3)
+
+	    return u_next
+	end
+
+	sol = [u0(x)]
+	current_u = u0(x)
+
+	for n in 1:nt
+	    current_u = rk3_step(current_u, Δt)
+	    noised = ((rand(nx).-0.5)*2*noise_strength) .+ copy(current_u)
+	    push!(sol, noised)
+	end
+
+	dt_out_target = cfl*Δx/abs(u_mean)
+	t_step = Int(floor(dt_out_target / Δt))
+
+	solution = []
+	for t_idx in 1:t_step:length(sol)
+	    push!(solution, sol[t_idx])
+	end
+
+	return solution, t_step * Δt
+end
+;
