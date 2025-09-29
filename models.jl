@@ -84,6 +84,37 @@ Lux.initialstates(rng::AbstractRNG, m::FluxModel) = Lux.initialstates(rng, m.cor
 (m::FluxModel)(x, ps, st) = m.core(x, ps, st)
 
 
+struct FluxModelSmall <: Lux.AbstractLuxLayer
+    n_pad::Int
+    core::Any
+end
+
+function FluxModelSmall(n_filter, n_in, n_hidden, n_out)
+    n_pad = n_filter ÷ 2
+
+    model_flux = Chain(
+        WrappedFunction(x -> pad_circular(x, n_pad; dims=1)),
+        Conv((n_filter,), n_in=>n_hidden, swish),
+        
+        WrappedFunction(x -> pad_circular(x, n_pad; dims=1)),
+        Conv((n_filter,), n_hidden=>n_out)
+    )
+
+    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
+    div_layer = Chain(
+        WrappedFunction(x -> pad_circular(x, 1; dims=1)),
+        StaticConv1D(div_kernel)
+    )
+
+    return FluxModelSmall(n_pad, SkipConnection(Chain(model_flux, div_layer), +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::FluxModelSmall) = Lux.initialparameters(rng, m.core)
+Lux.initialstates(rng::AbstractRNG, m::FluxModelSmall) = Lux.initialstates(rng, m.core)
+
+(m::FluxModelSmall)(x, ps, st) = m.core(x, ps, st)
+
+
 # Custom layers for handling tuple input for variable timestepping
 struct TupleConv{C} <: Lux.AbstractLuxLayer
     conv::C
@@ -106,6 +137,7 @@ function (m::TupleConv)((x, Δt), ps, st)
     y, st_conv = m.conv(x, ps.conv, st.conv)
     return (y, Δt), (conv=st_conv,)
 end
+
 
 struct TuplePadCircular <: Lux.AbstractLuxLayer
     n_pad::Int
@@ -131,6 +163,7 @@ function (m::TuplePadCircular)((x, Δt), ps, st)
     return (y, Δt), st
 end
 
+
 struct TupleSkipConnection{L} <: Lux.AbstractLuxLayer
     layer::L
 end
@@ -153,6 +186,7 @@ Lux.initialstates(::AbstractRNG, m::TupleDrop) = NamedTuple()
 function (m::TupleDrop)((x, Δt), ps, st)
     return x, st
 end
+
 
 struct FiLMBlock{G, B} <: Lux.AbstractLuxLayer
     γ_net::G
@@ -189,6 +223,23 @@ function (m::FiLMBlock)((x, Δt), ps, st)
 end
 
 
+struct TupleStaticConv <: Lux.AbstractLuxLayer
+    kernel
+end
+
+function TupleStaticConv(kernel::AbstractArray)
+    return TupleStaticConv(() -> copy(kernel))
+end
+
+Lux.initialparameters(::AbstractRNG, m::TupleStaticConv) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::TupleStaticConv) = (kernel = m.kernel(),)
+
+function (m::TupleStaticConv)((x, Δt), ps, st)
+    y = NNlib.conv(x, st.kernel)
+    return (y, Δt), st
+end
+
+
 struct TimeModel{M} <: Lux.AbstractLuxLayer
     main::M
 end
@@ -219,6 +270,44 @@ Lux.initialparameters(rng::AbstractRNG, m::TimeModel) = (main=Lux.initialparamet
 Lux.initialstates(rng::AbstractRNG, m::TimeModel) = (main=Lux.initialstates(rng,m.main),)
 
 function (m::TimeModel)((x, Δt), ps, st)
+    y, st_main = m.main((x, Δt), ps.main, st.main)
+    return y, (main=st_main,)
+end
+
+
+struct TimeFluxModel{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function TimeFluxModel(n_filter::Int, n_hidden::Int)
+    core = Chain(
+        TuplePadCircular(n_filter),
+        TupleConv((n_filter,), 1 => n_hidden, swish),
+        FiLMBlock(n_hidden, swish),
+
+        TuplePadCircular(n_filter),
+        TupleConv((n_filter,), n_hidden => n_hidden, swish),
+        FiLMBlock(n_hidden, swish),
+
+        TuplePadCircular(n_filter),
+        TupleConv((n_filter,), n_hidden => n_hidden, swish),
+        FiLMBlock(n_hidden, swish),
+
+        TuplePadCircular(n_filter),
+        TupleConv((n_filter,), n_hidden => 1)
+        )
+
+    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
+    flux_layer = Chain(core, TuplePadCircular(n_filter), TupleStaticConv(div_kernel))
+
+    main = Chain(TupleSkipConnection(flux_layer), TupleDrop())
+    return TimeFluxModel(main)
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::TimeFluxModel) = (main=Lux.initialparameters(rng,m.main),)
+Lux.initialstates(rng::AbstractRNG, m::TimeFluxModel) = (main=Lux.initialstates(rng,m.main),)
+
+function (m::TimeFluxModel)((x, Δt), ps, st)
     y, st_main = m.main((x, Δt), ps.main, st.main)
     return y, (main=st_main,)
 end
