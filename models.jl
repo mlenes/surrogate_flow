@@ -311,3 +311,57 @@ function (m::TimeFluxModel)((x, Δt), ps, st)
     y, st_main = m.main((x, Δt), ps.main, st.main)
     return y, (main=st_main,)
 end
+
+
+struct RLift <: Lux.AbstractLuxLayer
+end
+
+Lux.initialparameters(::AbstractRNG, m::RLift) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::RLift) = NamedTuple()
+
+function (m::RLift)(x, ps, st)
+    y = cat(x, reverse(x, dims=1); dims=4)
+    return y, st
+end
+
+
+struct GroupConv{C} <: Lux.AbstractLuxLayer
+    conv::C
+end
+
+function GroupConv(kernel_size::Tuple, n_in_out::Pair, activation)
+    n_in, n_out = n_in_out
+    return GroupConv(Conv(kernel_size, n_in => n_out, activation))
+end
+
+function GroupConv(kernel_size::Tuple, n_in_out::Pair)
+    n_in, n_out = n_in_out
+    return GroupConv(Conv(kernel_size, n_in => n_out))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::GroupConv) = (conv=Lux.initialparameters(rng, m.conv),)
+Lux.initialstates(rng::AbstractRNG, m::GroupConv) = (conv=Lux.initialstates(rng, m.conv),)
+
+function (m::GroupConv)(x, ps, st)
+    nx_in, c_in, B, g = size(x)
+
+    K = ps.conv.weight
+    c_out = size(K, 3)
+    n_filter = size(K, 1)
+    nx_out = nx_in-n_filter+1
+    y = zeros(Float32, nx_out, c_out, B, g)
+
+    for g_out in 1:g
+        for g_in in 1:g
+            u_in = x[:,:,:,g_in]
+
+            kernel = (g_out == g_in) ? K : reverse(K, dims=1)
+
+            ps_new = (weight=kernel, bias=ps.conv.bias)
+
+            y[:,:,:,g_out] .+= m.conv(u_in, ps_new, st.conv)[1]
+        end
+    end
+
+    return y, st
+end
