@@ -313,36 +313,53 @@ function (m::TimeFluxModel)((x, Δt), ps, st)
 end
 
 
-struct RLift <: Lux.AbstractLuxLayer
+struct RLift{C} <: Lux.AbstractLuxLayer
+    conv::C
 end
 
-Lux.initialparameters(::AbstractRNG, m::RLift) = NamedTuple()
-Lux.initialstates(::AbstractRNG, m::RLift) = NamedTuple()
+function RLift(kernel_size::Tuple, activation)
+    return RLift(Conv(kernel_size, 1 => 1, activation, use_bias=false))
+end
+
+function RLift(kernel_size::Tuple)
+    return RLift(Conv(kernel_size, 1 => 1, use_bias=false))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::RLift) = (conv=Lux.initialparameters(rng, m.conv),)
+Lux.initialstates(rng::AbstractRNG, m::RLift) = (conv=Lux.initialstates(rng, m.conv),)
 
 function (m::RLift)(x, ps, st)
-    y = cat(x, reverse(x, dims=1); dims=4)
+    nx_in, _, B = size(x)
+    K = ps.conv.weight
+    n_filter = size(K, 1)
+    nx_out = nx_in-n_filter+1
+    y = zeros(Float32, nx_out, 1, B, 2)
+
+    y[:,:,:,1] .+= m.conv(x, (weight=K,), st.conv)[1]
+    y[:,:,:,2] .+= m.conv(x, (weight=-1*reverse(K, dims=1),), st.conv)[1]
+
     return y, st
 end
 
 
-struct GroupConv{C} <: Lux.AbstractLuxLayer
+struct RGroupConv{C} <: Lux.AbstractLuxLayer
     conv::C
 end
 
-function GroupConv(kernel_size::Tuple, n_in_out::Pair, activation)
+function RGroupConv(kernel_size::Tuple, n_in_out::Pair, activation)
     n_in, n_out = n_in_out
-    return GroupConv(Conv(kernel_size, n_in => n_out, activation))
+    return RGroupConv(Conv(kernel_size, n_in => n_out, activation, use_bias=false))
 end
 
-function GroupConv(kernel_size::Tuple, n_in_out::Pair)
+function RGroupConv(kernel_size::Tuple, n_in_out::Pair)
     n_in, n_out = n_in_out
-    return GroupConv(Conv(kernel_size, n_in => n_out))
+    return RGroupConv(Conv(kernel_size, n_in => n_out, use_bias=false))
 end
 
-Lux.initialparameters(rng::AbstractRNG, m::GroupConv) = (conv=Lux.initialparameters(rng, m.conv),)
-Lux.initialstates(rng::AbstractRNG, m::GroupConv) = (conv=Lux.initialstates(rng, m.conv),)
+Lux.initialparameters(rng::AbstractRNG, m::RGroupConv) = (conv=Lux.initialparameters(rng, m.conv),)
+Lux.initialstates(rng::AbstractRNG, m::RGroupConv) = (conv=Lux.initialstates(rng, m.conv),)
 
-function (m::GroupConv)(x, ps, st)
+function (m::RGroupConv)(x, ps, st)
     nx_in, c_in, B, g = size(x)
 
     K = ps.conv.weight
@@ -351,17 +368,96 @@ function (m::GroupConv)(x, ps, st)
     nx_out = nx_in-n_filter+1
     y = zeros(Float32, nx_out, c_out, B, g)
 
-    for g_out in 1:g
-        for g_in in 1:g
-            u_in = x[:,:,:,g_in]
-
-            kernel = (g_out == g_in) ? K : reverse(K, dims=1)
-
-            ps_new = (weight=kernel, bias=ps.conv.bias)
-
-            y[:,:,:,g_out] .+= m.conv(u_in, ps_new, st.conv)[1]
-        end
-    end
+    y[:,:,:,1] .+= (m.conv(x[:,:,:,1], (weight=K,), st.conv)[1] .+ m.conv(x[:,:,:,2], (weight=-1*reverse(K, dims=1),), st.conv)[1])
+    y[:,:,:,2] .+= (m.conv(x[:,:,:,1], (weight=-1*reverse(K, dims=1),), st.conv)[1] .+ m.conv(x[:,:,:,2], (weight=K,), st.conv)[1])
 
     return y, st
 end
+
+
+struct RDrop <: Lux.AbstractLuxLayer
+end
+
+Lux.initialparameters(::AbstractRNG, m::RDrop) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::RDrop) = NamedTuple()
+
+function (m::RDrop)(x, ps, st)
+    return x[:,:,:,1], st
+end
+
+
+struct PadCircular <: Lux.AbstractLuxLayer
+    n_pad::Int
+
+    function PadCircular(n_filter::Int)
+        return new(n_filter ÷ 2)
+    end
+end
+
+Lux.initialparameters(::AbstractRNG, m::PadCircular) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::PadCircular) = NamedTuple()
+
+function (m::PadCircular)(x, ps, st)
+    n_pad = m.n_pad
+    nx = size(x, 1)
+    
+    y = vcat(
+        x[end-n_pad+1:end, :, :],
+        x,
+        x[1:n_pad, :, :]
+    )
+
+    return y, st
+end
+
+
+struct RPadCircular <: Lux.AbstractLuxLayer
+    n_pad::Int
+
+    function RPadCircular(n_filter::Int)
+        return new(n_filter ÷ 2)
+    end
+end
+
+Lux.initialparameters(::AbstractRNG, m::RPadCircular) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::RPadCircular) = NamedTuple()
+
+function (m::RPadCircular)(x, ps, st)
+    n_pad = m.n_pad
+    nx = size(x, 1)
+    
+    y = vcat(
+        x[end-n_pad+1:end, :, :, :],
+        x,
+        x[1:n_pad, :, :, :]
+    )
+
+    return y, st
+end
+
+
+struct EquiModel{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function EquiModel(n_filter::Int, n_hidden::Int)
+    main = Chain(
+            PadCircular(n_filter),
+            RLift((n_filter,), tanh),
+
+            RPadCircular(n_filter),
+            RGroupConv((n_filter,), 1 => n_hidden, tanh),
+
+            # RPadCircular(n_filter),
+            # RGroupConv((n_filter,), n_hidden => 1),
+
+            RDrop()
+        )
+
+    return EquiModel(main)
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::EquiModel) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::EquiModel) = (main=Lux.initialstates(rng, m.main),)
+
+(m::EquiModel)(x, ps, st) = m.main(x, ps.main, st.main)
