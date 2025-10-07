@@ -509,6 +509,12 @@ function EquiFluxModel(n_filter::Int, n_hidden::Int)
             RConv((n_filter,), 1 => n_hidden, swish),
 
             RPadCircular(n_filter),
+            RConv((n_filter,), n_hidden => n_hidden, swish),
+
+            RPadCircular(n_filter),
+            RConv((n_filter,), n_hidden => n_hidden, swish),
+
+            RPadCircular(n_filter),
             RConv((n_filter,), n_hidden => 1),
 
             RPadCircular(size(div_kernel,1)),
@@ -524,6 +530,40 @@ Lux.initialparameters(rng::AbstractRNG, m::EquiFluxModel) = (main=Lux.initialpar
 Lux.initialstates(rng::AbstractRNG, m::EquiFluxModel) = (main=Lux.initialstates(rng, m.main),)
 
 function (m::EquiFluxModel)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
+struct EquiFluxModelSmall{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function EquiFluxModelSmall(n_filter::Int, n_hidden::Int)
+    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
+
+    main = Chain(
+            RLift(),
+
+            RPadCircular(n_filter),
+            RConv((n_filter,), 1 => n_hidden, swish),
+
+            RPadCircular(n_filter),
+            RConv((n_filter,), n_hidden => 1),
+
+            RPadCircular(size(div_kernel,1)),
+            RFluxConv(div_kernel),
+
+            RDrop()
+        )
+
+    return EquiFluxModelSmall(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::EquiFluxModelSmall) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::EquiFluxModelSmall) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::EquiFluxModelSmall)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end
