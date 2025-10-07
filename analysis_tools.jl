@@ -84,7 +84,6 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
 	    errors[i] = mean(abs2, y_pred[i,:] .- y_true[i,:])
 	    true_masses[i] = sum(y_true[i,:])
 	    pred_masses[i] = sum(y_pred[i,:])
-	    print
 	end
 
 	p0 = plot(output_times, errors, xlabel="Time", ylabel="Error", label="MSE", title="Mean Squared Error in unrolled velocity")
