@@ -1,7 +1,7 @@
 using JLD2, Plots, Statistics, Lux, Reactant, Enzyme, Optimisers, MLUtils, Random, NNlib, StatsPlots, LinearAlgebra
 include("models.jl")
 
-function show_unrolling(data_path, model, Xμ, Xσ, save_path)
+function show_unrolling(data_path, model, ps, st, Xμ, Xσ, save_path)
 	data=load(data_path)
 
 	y_pred = zeros(length(data["solution"]), length(data["grid"]))
@@ -12,7 +12,7 @@ function show_unrolling(data_path, model, Xμ, Xσ, save_path)
 	for t in 2:length(data["solution"])
 	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
 	    
-	    y_pred[t,:] .= model(u_prev)[:,1,1]
+	    y_pred[t,:] .= model(u_prev, ps, st)[1][:,1,1,1]
 	    y_true[t,:] .= Float32.(data["solution"][t])
 	end
 	y_pred = y_pred .* Xσ .+ Xμ
@@ -58,7 +58,7 @@ function show_unrolling_Δt(data_path, model, Xμ, Xσ, save_path)
 	end
 end
 
-function show_plots(data_path, model, Xμ, Xσ, save_path)
+function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path)
 	data=load(data_path)
 
 	y_pred = zeros(length(data["solution"]), length(data["grid"]))
@@ -69,7 +69,7 @@ function show_plots(data_path, model, Xμ, Xσ, save_path)
 	for t in 2:length(data["solution"])
 	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
 	    
-	    y_pred[t,:] .= model(u_prev)[:,1,1]
+	    y_pred[t,:] .= model(u_prev, ps, st)[1][:,1,1,1]
 	    y_true[t,:] .= Float32.(data["solution"][t])
 	end
 	y_pred = y_pred .* Xσ .+ Xμ

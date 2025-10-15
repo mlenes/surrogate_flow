@@ -348,7 +348,7 @@ Lux.initialparameters(rng::AbstractRNG, m::RLift) = NamedTuple()
 Lux.initialstates(rng::AbstractRNG, m::RLift) = NamedTuple()
 
 function (m::RLift)(x, ps, st)
-    y = cat(x, -1reverse(x, dims=1), dims=4)
+    y = cat(x, -reverse(x, dims=1), dims=4)
     return y, st
 end
 
@@ -378,6 +378,21 @@ function (m::RConv)(x, ps, st)
 end
 
 
+struct RSkipConnection{L} <: Lux.AbstractLuxLayer
+    layer::L
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::RSkipConnection) = (layer=Lux.initialparameters(rng, m.layer),)
+Lux.initialstates(rng::AbstractRNG, m::RSkipConnection) = (layer=Lux.initialstates(rng, m.layer),)
+
+function (m::RSkipConnection)(x, ps, st)
+    y_e = m.layer(x[:,:,:,1], ps.layer, st.layer)[1] .+ x[:,:,:,1]
+    y_r = m.layer(x[:,:,:,2], ps.layer, st.layer)[1] .+ x[:,:,:,2]
+    y = cat(y_e, y_r, dims=4)
+    return y, (layer=st,)
+end
+
+
 struct RDrop <: Lux.AbstractLuxLayer
 end
 
@@ -385,7 +400,20 @@ Lux.initialparameters(::AbstractRNG, m::RDrop) = NamedTuple()
 Lux.initialstates(::AbstractRNG, m::RDrop) = NamedTuple()
 
 function (m::RDrop)(x, ps, st)
-    y = 0.5f0(x[:,:,:, 1] .+ -1reverse(x[:,:,:,2], dims=1))
+    y = 0.5f0(x[:,:,:, 1] .+ -reverse(x[:,:,:,2], dims=1))
+    return y, st
+end
+
+
+struct RPick <: Lux.AbstractLuxLayer
+    pick::Int
+end
+
+Lux.initialparameters(::AbstractRNG, m::RPick) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::RPick) = NamedTuple()
+
+function (m::RPick)(x, ps, st)
+    y = x[:,:,:, m.pick]
     return y, st
 end
 
@@ -567,3 +595,39 @@ function (m::EquiFluxModelSmall)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end
+
+
+struct SplitEquiFluxModel{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function SplitEquiFluxModel(n_filter::Int, n_hidden::Int)
+    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
+
+    main = Chain(
+            PadCircular(n_filter),
+            Conv((n_filter,), 1 => n_hidden, swish),
+
+            PadCircular(n_filter),
+            Conv((n_filter,), n_hidden => n_hidden, swish),
+
+            PadCircular(n_filter),
+            Conv((n_filter,), n_hidden => n_hidden, swish),
+
+            PadCircular(n_filter),
+            Conv((n_filter,), n_hidden => 1),
+
+            PadCircular(size(div_kernel,1)),
+            StaticConv1D(div_kernel)
+        )
+
+    return SplitEquiFluxModel(Chain(RLift(), RSkipConnection(main)))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::SplitEquiFluxModel) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::SplitEquiFluxModel) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::SplitEquiFluxModel)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end;
