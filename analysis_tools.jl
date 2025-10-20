@@ -29,35 +29,6 @@ function show_unrolling(data_path, model, ps, st, Xμ, Xσ, save_path)
 	end
 end
 
-function show_unrolling_Δt(data_path, model, Xμ, Xσ, save_path)
-	data=load(data_path)
-	Δt=Float32.(reshape([data["dt_out"]],1,1))
-
-	y_pred = zeros(length(data["solution"]), length(data["grid"]))
-	y_true = zeros(length(data["solution"]), length(data["grid"]))
-	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
-	y_true[1,:] = data["solution"][1]
-
-	for t in 2:length(data["solution"])
-	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
-	    
-	    y_pred[t,:] .= model((u_prev, Δt))[:,1,1]
-	    y_true[t,:] .= Float32.(data["solution"][t])
-	end
-	y_pred = y_pred .* Xσ .+ Xμ
-
-	output_grid = data["grid"]
-	output_times = data["times"]
-	begin
-	    anim = @animate for t in 1:length(output_times)
-	        p = plot(output_grid, y_true[t,:], xlabel="x", ylabel="u", label="target u(t=$(round(output_times[t],digits=2)))")
-	        plot!(p, output_grid, y_pred[t,:], label="Unrolled estimate", linestyle=:dash, legend=:topright, ylim=(minimum(y_true), maximum(y_true)))
-	        plot(p, size=(800,400))
-	    end
-	    gif(anim, save_path, fps=15)
-	end
-end
-
 function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path)
 	data=load(data_path)
 
@@ -94,61 +65,24 @@ function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path)
 	display(fig)
 end
 
-function show_plots_Δt(data_path, model, Xμ, Xσ, save_path)
-	data=load(data_path)
-	Δt=Float32.(reshape([data["dt_out"]],1,1))
-
-	y_pred = zeros(length(data["solution"]), length(data["grid"]))
-	y_true = zeros(length(data["solution"]), length(data["grid"]))
-	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
-	y_true[1,:] = data["solution"][1]
-
-	for t in 2:length(data["solution"])
-	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
-	    
-	    y_pred[t,:] .= model((u_prev, Δt))[:,1,1]
-	    y_true[t,:] .= Float32.(data["solution"][t])
-	end
-	y_pred = y_pred .* Xσ .+ Xμ
-
-	output_grid = data["grid"]
-	output_times = data["times"]
-
-    errors = zeros(length(output_times))
-	true_masses = zeros(length(output_times))
-	pred_masses = zeros(length(output_times))
-	for i in 1:length(output_times)
-	    errors[i] = mean(abs2, y_pred[i,:] .- y_true[i,:])
-	    true_masses[i] = sum(y_true[i,:])
-	    pred_masses[i] = sum(y_pred[i,:])
-	end
-
-	p0 = plot(output_times, errors, xlabel="Time", ylabel="Error", label="MSE", title="Mean Squared Error in unrolled velocity")
-	p1 = plot(output_times, true_masses, xlabel="Time", ylabel="Mass", label="Target")
-	plot!(p1, output_times, pred_masses, label="Unrolled", title="Mass conservation of Target and Unrolled prediction")
-	fig = plot(p0, p1, layout=(2,1), size=(800,800))
-	savefig(fig, save_path)
-	display(fig)
-end
-
-function full_jacobian_fd(model, u; ε=1e-6)
+function full_jacobian_fd(model, ps, st, u; ε=1e-6)
     N = length(u)
     J = zeros(Float32, N, N)
     for j in 1:N
         e = zeros(Float32, N); e[j] = 1.0f0
-        J[:, j] = (model(u .+ Float32(ε)*e) .- model(u)) ./ ε
+        J[:, j] = (model(u .+ Float32(ε)*e, ps, st)[1] .- model(u, ps, st)[1]) ./ ε
     end
     return J
 end
 
-function show_spectral_density(model, datapath, Xμ, Xσ, savepath)
+function show_spectral_density(model, ps, st, datapath, Xμ, Xσ, savepath)
 	data = load(datapath)
 	output_times = data["times"]
 
 	begin
 		anim = @animate for t in 1:length(data["solution"])
 			u = (Float32.(reshape(data["solution"][t], :, 1, 1)) .- Xμ) ./ Xσ
-			J = full_jacobian_fd(model, u)
+			J = full_jacobian_fd(model, ps, st, u)
 			λ, v = eigen(J)
 			λ_max = maximum(abs.(λ))
 			λ_min = minimum(abs.(λ))
@@ -212,7 +146,6 @@ function generate_datasets(trainpaths, truthpaths, pairs_per_set)
 	n_points = length(load(trainpaths[1])["grid"])
 
 	X = zeros(Float32, n_points, 1, n_data)
-	Δt = zeros(Float32, 1, n_data)
 	y = zeros(Float32, n_points, 1, n_data)
 
 	count = 1
@@ -225,7 +158,6 @@ function generate_datasets(trainpaths, truthpaths, pairs_per_set)
 		
 		for t in pair_times
 			X[:,:,count] .= X_data["solution"][t]
-			Δt[:,count] .= X_data["dt_out"]
 
 			y[:,:,count] .= y_data["solution"][t+1]
 			count+=1
@@ -233,10 +165,11 @@ function generate_datasets(trainpaths, truthpaths, pairs_per_set)
 	end
 
 	Xμ, Xσ = mean(X), std(X)
+	Xμ = 0 # The equivariant model doesnt like mean subtracting.
 	X = (X .- Xμ) ./ Xσ
 	y = (y .- Xμ) ./ Xσ
 
-	return (X, Δt), y, Xμ, Xσ
+	return X, y, Xμ, Xσ
 end
 
 function burgers_FV(nx, L, ν, k, u_mean, u_amplitude, noise_strength, t_end, cfl; nt=10000)
@@ -318,6 +251,6 @@ function burgers_FV(nx, L, ν, k, u_mean, u_amplitude, noise_strength, t_end, cf
 	    push!(solution, sol[t_idx])
 	end
 
-	return solution, t_step * Δt
+	return solution
 end
 ;
