@@ -1,24 +1,33 @@
 using JLD2, Plots, Statistics, Lux, Reactant, Enzyme, Optimisers, MLUtils, Random, NNlib, StatsPlots, LinearAlgebra
 include("models.jl")
 
-function show_unrolling(data_path, model, ps, st, Xμ, Xσ, save_path)
+function show_unrolling(data_path, model, ps, st, Xμ, Xσ, save_path; do_norm=true)
 	data=load(data_path)
 
 	y_pred = zeros(length(data["solution"]), length(data["grid"]))
 	y_true = zeros(length(data["solution"]), length(data["grid"]))
-	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+
+	if do_norm
+		y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	else
+		y_pred[1,:] = data["solution"][1]
+	end
+	
 	y_true[1,:] = data["solution"][1]
 
 	for t in 2:length(data["solution"])
 	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
 	    
-	    y_pred[t,:] .= model(u_prev, ps, st)[1][:,1,1,1]
+	    y_pred[t,:] .= model(u_prev, ps, st)[1][:,1,1]
 	    y_true[t,:] .= Float32.(data["solution"][t])
 	end
-	y_pred = y_pred .* Xσ .+ Xμ
+	if do_norm
+		y_pred = y_pred .* Xσ .+ Xμ
+	end
 
 	output_grid = data["grid"]
 	output_times = data["times"]
+
 	begin
 	    anim = @animate for t in 1:length(output_times)
 	        p = plot(output_grid, y_true[t,:], xlabel="x", ylabel="u", label="target u(t=$(round(output_times[t],digits=2)))")
@@ -29,21 +38,79 @@ function show_unrolling(data_path, model, ps, st, Xμ, Xσ, save_path)
 	end
 end
 
-function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path)
+function show_unrolling_heatmap(data_path, model, ps, st, Xμ, Xσ, save_path; do_norm=true)
+	data=load(data_path)
+
+	y_pred = zeros(length(data["times"]), length(data["grid_x"]), length(data["grid_y"]), 2)
+	y_true = zeros(length(data["times"]), length(data["grid_x"]), length(data["grid_y"]), 2)
+
+	if do_norm
+		y_pred[1,:,:,1] = (data["u_solution"][1] .- Xμ) ./ Xσ
+		y_pred[1,:,:,2] = (data["v_solution"][1] .- Xμ) ./ Xσ
+	else
+		y_pred[1,:,:,1] = data["u_solution"][1]
+		y_pred[1,:,:,2] = data["v_solution"][1]
+	end
+	
+	y_true[1,:,:,1] = data["u_solution"][1]
+	y_true[1,:,:,2] = data["v_solution"][1]
+
+	for t in 2:length(data["times"])
+	    sol_prev = Float32.(reshape(y_pred[t-1,:,:,:], size(y_pred,2), size(y_pred,3), 2, 1))
+	    
+	    y_pred[t,:,:,:] .= model(sol_prev, ps, st)[1][:,:,:,1]
+	    y_true[t,:,:,1] .= Float32.(data["u_solution"][t])
+	    y_true[t,:,:,2] .= Float32.(data["v_solution"][t])
+	end
+
+	if do_norm
+		y_pred = y_pred .* Xσ .+ Xμ
+	end
+
+	grid_x = data["grid_x"]
+	grid_y = data["grid_y"]
+	times = data["times"]
+
+	min_u=minimum(y_true[:,:,:,1])
+	max_u=maximum(y_true[:,:,:,1])
+	min_v=minimum(y_true[:,:,:,2])
+	max_v=maximum(y_true[:,:,:,2])
+
+	begin
+	    anim = @animate for t in 1:length(times)
+	        h_x_true = heatmap(grid_x, grid_y, y_true[t,:,:,1], title="u target t=$(round(times[t],digits=2))", clims=(min_u,max_u))
+	        h_x_pred = heatmap(grid_x, grid_y, y_pred[t,:,:,1], title="u pred", clims=(min_u,max_u))
+	        h_y_true = heatmap(grid_x, grid_y, y_true[t,:,:,2], title="v target", clims=(min_v,max_v))
+	        h_y_pred = heatmap(grid_x, grid_y, y_pred[t,:,:,2], title="v pred", clims=(min_v,max_v))
+	        plot(h_x_true, h_x_pred, h_y_true, h_y_pred, layout=(4,1), size=(800,1600), xlabel="x", ylabel="y")
+	    end
+	    gif(anim, save_path, fps=15)
+	end
+end
+
+function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path; do_norm=true)
 	data=load(data_path)
 
 	y_pred = zeros(length(data["solution"]), length(data["grid"]))
 	y_true = zeros(length(data["solution"]), length(data["grid"]))
-	y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	
+	if do_norm
+		y_pred[1,:] = (data["solution"][1] .- Xμ) ./ Xσ
+	else
+		y_pred[1,:] = data["solution"][1]
+	end
+
 	y_true[1,:] = data["solution"][1]
 
 	for t in 2:length(data["solution"])
 	    u_prev = Float32.(reshape(y_pred[t-1,:], :, 1, 1))
 	    
-	    y_pred[t,:] .= model(u_prev, ps, st)[1][:,1,1,1]
+	    y_pred[t,:] .= model(u_prev, ps, st)[1][:,1,1]
 	    y_true[t,:] .= Float32.(data["solution"][t])
 	end
-	y_pred = y_pred .* Xσ .+ Xμ
+	if do_norm
+		y_pred = y_pred .* Xσ .+ Xμ
+	end
 
 	output_grid = data["grid"]
 	output_times = data["times"]
@@ -65,6 +132,66 @@ function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path)
 	display(fig)
 end
 
+function show_plots_2D(data_path, model, ps, st, Xμ, Xσ, save_path; do_norm=true)
+	data=load(data_path)
+
+	y_pred = zeros(length(data["times"]), length(data["grid_x"]), length(data["grid_y"]), 2)
+	y_true = zeros(length(data["times"]), length(data["grid_x"]), length(data["grid_y"]), 2)
+
+	if do_norm
+		y_pred[1,:,:,1] = (data["u_solution"][1] .- Xμ) ./ Xσ
+		y_pred[1,:,:,2] = (data["v_solution"][1] .- Xμ) ./ Xσ
+	else
+		y_pred[1,:,:,1] = data["u_solution"][1]
+		y_pred[1,:,:,2] = data["v_solution"][1]
+	end
+	
+	y_true[1,:,:,1] = data["u_solution"][1]
+	y_true[1,:,:,2] = data["v_solution"][1]
+
+	for t in 2:length(data["times"])
+	    sol_prev = Float32.(reshape(y_pred[t-1,:,:,:], size(y_pred,2), size(y_pred,3), 2, 1))
+	    
+	    y_pred[t,:,:,:] .= model(sol_prev, ps, st)[1][:,:,:,1]
+	    y_true[t,:,:,1] .= Float32.(data["u_solution"][t])
+	    y_true[t,:,:,2] .= Float32.(data["v_solution"][t])
+	end
+
+	if do_norm
+		y_pred = y_pred .* Xσ .+ Xμ
+	end
+
+	grid_x = data["grid_x"]
+	grid_y = data["grid_y"]
+	times = data["times"]
+
+	errors_x = zeros(length(times))
+	errors_y = zeros(length(times))
+	true_masses_x = zeros(length(times))
+	true_masses_y = zeros(length(times))
+	pred_masses_x = zeros(length(times))
+	pred_masses_y = zeros(length(times))
+
+	for t in 1:length(times)
+		errors_x[t] = mean(abs2, y_pred[t,:,:,1] .- y_true[t,:,:,1])
+		errors_y[t] = mean(abs2, y_pred[t,:,:,2] .- y_true[t,:,:,2])
+		true_masses_x[t] = sum(y_true[t,:,:,1])
+		true_masses_y[t] = sum(y_true[t,:,:,2])
+		pred_masses_x[t] = sum(y_pred[t,:,:,1])
+		pred_masses_y[t] = sum(y_pred[t,:,:,2])
+	end
+
+	p0 = plot(times, errors_x, xlabel="Time", ylabel="Error", label="Err u", title="Mean Squared Error in unrolled velocity")
+	plot!(p0, times, errors_y, label="Err v")
+	p1 = plot(times, true_masses_x, xlabel="Time", ylabel="Mass", label="Target u mass")
+	plot!(p1, times, pred_masses_x, label="Unrolled u mass", title="Mass conservation of Target and Unrolled prediction", linestyle=:dash)
+	p2 = plot(times, true_masses_y, label="Target v mass", xlabel="Time", ylabel="Mass")
+	plot!(p2, times, pred_masses_y, label="Unrolled v mass", title="Mass conservation of Target and Unrolled prediction", linestyle=:dash)
+	fig = plot(p0, p1, p2, layout=(3,1), size=(800,1200))
+	savefig(fig, save_path)
+	display(fig)
+end
+
 function full_jacobian_fd(model, ps, st, u; ε=1e-6)
     N = length(u)
     J = zeros(Float32, N, N)
@@ -75,13 +202,18 @@ function full_jacobian_fd(model, ps, st, u; ε=1e-6)
     return J
 end
 
-function show_spectral_density(model, ps, st, datapath, Xμ, Xσ, savepath)
+function show_spectral_density(model, ps, st, datapath, Xμ, Xσ, savepath; do_norm=true)
 	data = load(datapath)
 	output_times = data["times"]
 
 	begin
 		anim = @animate for t in 1:length(data["solution"])
-			u = (Float32.(reshape(data["solution"][t], :, 1, 1)) .- Xμ) ./ Xσ
+			if do_norm
+				u = (Float32.(reshape(data["solution"][t], :, 1, 1)) .- Xμ) ./ Xσ
+			else
+				u = Float32.(reshape(data["solution"][t], :, 1, 1))
+			end
+			
 			J = full_jacobian_fd(model, ps, st, u)
 			λ, v = eigen(J)
 			λ_max = maximum(abs.(λ))
@@ -93,10 +225,14 @@ function show_spectral_density(model, ps, st, datapath, Xμ, Xσ, savepath)
 	end
 end
 
-function show_max_perturbation(model, datapath, Xμ, Xσ, savepath)
+function show_max_perturbation(model, datapath, Xμ, Xσ, savepath; do_norm=true)
     data=load(datapath)
     u0 = Float32.(reshape(data["solution"][1], :, 1, 1))
-    u0_norm = (u0 .- Xμ) ./ Xσ
+    if do_norm
+    	u0_norm = (u0 .- Xμ) ./ Xσ
+    else
+    	u0_norm = u0
+    end
 
     J = full_jacobian_fd(model, u0_norm)
     all_λ, all_v = eigen(J)
@@ -127,8 +263,13 @@ function show_max_perturbation(model, datapath, Xμ, Xσ, savepath)
     end
 
     for i in 1:length(trajectory_ref)
-    	trajectory_ref[i] = (trajectory_ref[i] .* Xσ) .+ Xμ
-    	trajectory_pert[i] = (trajectory_pert[i] .* Xσ) .+ Xμ
+    	if do_norm
+	    	trajectory_ref[i] = (trajectory_ref[i] .* Xσ) .+ Xμ
+	    	trajectory_pert[i] = (trajectory_pert[i] .* Xσ) .+ Xμ
+	    else
+	    	trajectory_ref[i] = trajectory_ref[i]
+	    	trajectory_pert[i] = trajectory_pert[i]
+	    end
     end
 
     begin
@@ -141,7 +282,7 @@ function show_max_perturbation(model, datapath, Xμ, Xσ, savepath)
     end
 end
 
-function generate_datasets(trainpaths, truthpaths, pairs_per_set)
+function generate_datasets(trainpaths, truthpaths, pairs_per_set; do_norm=true)
 	n_data = pairs_per_set * length(trainpaths)
 	n_points = length(load(trainpaths[1])["grid"])
 
@@ -165,9 +306,10 @@ function generate_datasets(trainpaths, truthpaths, pairs_per_set)
 	end
 
 	Xμ, Xσ = mean(X), std(X)
-	Xμ = 0 # The equivariant model doesnt like mean subtracting.
-	X = (X .- Xμ) ./ Xσ
-	y = (y .- Xμ) ./ Xσ
+	if do_norm
+		X = (X .- Xμ) ./ Xσ
+		y = (y .- Xμ) ./ Xσ
+	end
 
 	return X, y, Xμ, Xσ
 end

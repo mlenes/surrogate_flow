@@ -4,8 +4,6 @@ struct BaseModel{C} <: Lux.AbstractLuxLayer
 end
 
 function BaseModel(n_filter, n_hidden)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
-
     main = Chain(
         PadCircular(n_filter),
         Conv((n_filter,), 1=>n_hidden, swish),
@@ -27,6 +25,37 @@ Lux.initialparameters(rng::AbstractRNG, m::BaseModel) = (main=Lux.initialparamet
 Lux.initialstates(rng::AbstractRNG, m::BaseModel) = (main=Lux.initialstates(rng, m.main),)
 
 function (m::BaseModel)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
+struct BaseModel2D{C} <: Lux.AbstractLuxLayer
+    main::C
+end
+
+function BaseModel2D(n_filter, n_hidden)
+    main = Chain(
+        PadCircular2D(n_filter),
+        Conv((n_filter, n_filter), 2=>n_hidden, swish),
+
+        PadCircular2D(n_filter),
+        Conv((n_filter, n_filter), n_hidden=>n_hidden, swish),
+
+        PadCircular2D(n_filter),
+        Conv((n_filter, n_filter), n_hidden=>n_hidden, swish),
+        
+        PadCircular2D(n_filter),
+        Conv((n_filter, n_filter), n_hidden=>2)
+    )
+
+    return BaseModel2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::BaseModel2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::BaseModel2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::BaseModel2D)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end
@@ -59,22 +88,48 @@ function (m::BaseModelSmall)(x, ps, st)
 end
 
 
+struct BaseModelSmall2D{C} <: Lux.AbstractLuxLayer
+    main::C
+end
+
+function BaseModelSmall2D(n_filter, n_hidden)
+    main = Chain(
+        PadCircular2D(n_filter),
+        Conv((n_filter, n_filter), 2=>n_hidden, swish),
+        
+        PadCircular2D(n_filter),
+        Conv((n_filter, n_filter), n_hidden=>2)
+    )
+
+    return BaseModelSmall2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::BaseModelSmall2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::BaseModelSmall2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::BaseModelSmall2D)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
 # Custom convolution layer with static kernel
-struct StaticConv1D <: Lux.AbstractLuxLayer
+struct StaticConv <: Lux.AbstractLuxLayer
     kernel
 end
 
-function StaticConv1D(kernel::AbstractArray)
-    return StaticConv1D(() -> copy(kernel))
+function StaticConv(kernel::AbstractArray)
+    return StaticConv(() -> copy(kernel))
 end
 
-Lux.initialparameters(::AbstractRNG, layer::StaticConv1D) = NamedTuple()
-Lux.initialstates(::AbstractRNG, layer::StaticConv1D) = (kernel = layer.kernel(),)
+Lux.initialparameters(::AbstractRNG, ::StaticConv) = NamedTuple()
+Lux.initialstates(::AbstractRNG, layer::StaticConv) = (kernel = layer.kernel(),)
 
-function (l::StaticConv1D)(x, ps, st)
+function (l::StaticConv)(x, ps, st)
     y = NNlib.conv(x, st.kernel)
     return y, st
 end
+
 
 # This model predicts fluxes as its next to last step, and then predicts the updated velocity field from those fluxes
 struct FluxModel{C} <: Lux.AbstractLuxLayer
@@ -98,7 +153,7 @@ function FluxModel(n_filter, n_hidden)
         Conv((n_filter,), n_hidden=>1),
 
         PadCircular(size(div_kernel,1)),
-        StaticConv1D(div_kernel)
+        StaticConv(div_kernel)
     )
 
     return FluxModel(SkipConnection(main, +))
@@ -108,6 +163,42 @@ Lux.initialparameters(rng::AbstractRNG, m::FluxModel) = (main=Lux.initialparamet
 Lux.initialstates(rng::AbstractRNG, m::FluxModel) = (main=Lux.initialstates(rng, m.main),)
 
 function (m::FluxModel)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
+struct FluxModel2D{C} <: Lux.AbstractLuxLayer
+    main::C
+end
+
+function FluxModel2D(n_filter, n_hidden)
+    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
+
+    main = Chain(
+        PadCircular2D(n_filter),
+        Conv((n_filter,), 2=>n_hidden, swish),
+
+        PadCircular2D(n_filter),
+        Conv((n_filter,), n_hidden=>n_hidden, swish),
+
+        PadCircular2D(n_filter),
+        Conv((n_filter,), n_hidden=>n_hidden, swish),
+        
+        PadCircular2D(n_filter),
+        Conv((n_filter,), n_hidden=>2),
+
+        PadCircular2D(size(div_kernel,1)),
+        StaticConv(div_kernel)
+    )
+
+    return FluxModel2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::FluxModel2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::FluxModel2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::FluxModel2D)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end
@@ -128,7 +219,7 @@ function FluxModelSmall(n_filter, n_hidden)
         Conv((n_filter,), n_hidden=>1),
 
         PadCircular(size(div_kernel,1)),
-        StaticConv1D(div_kernel)
+        StaticConv(div_kernel)
     )
 
     return FluxModelSmall(SkipConnection(main, +))
@@ -146,8 +237,8 @@ end
 struct RLift <: Lux.AbstractLuxLayer
 end
 
-Lux.initialparameters(rng::AbstractRNG, m::RLift) = NamedTuple()
-Lux.initialstates(rng::AbstractRNG, m::RLift) = NamedTuple()
+Lux.initialparameters(rng::AbstractRNG, ::RLift) = NamedTuple()
+Lux.initialstates(rng::AbstractRNG, ::RLift) = NamedTuple()
 
 function (m::RLift)(x, ps, st)
     y = cat(x, -reverse(x, dims=1), dims=4)
@@ -198,8 +289,8 @@ end
 struct RDrop <: Lux.AbstractLuxLayer
 end
 
-Lux.initialparameters(::AbstractRNG, m::RDrop) = NamedTuple()
-Lux.initialstates(::AbstractRNG, m::RDrop) = NamedTuple()
+Lux.initialparameters(::AbstractRNG, ::RDrop) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RDrop) = NamedTuple()
 
 function (m::RDrop)(x, ps, st)
     y = 0.5f0(x[:,:,:, 1] .+ -reverse(x[:,:,:,2], dims=1))
@@ -211,8 +302,8 @@ struct RPick <: Lux.AbstractLuxLayer
     pick::Int
 end
 
-Lux.initialparameters(::AbstractRNG, m::RPick) = NamedTuple()
-Lux.initialstates(::AbstractRNG, m::RPick) = NamedTuple()
+Lux.initialparameters(::AbstractRNG, ::RPick) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RPick) = NamedTuple()
 
 function (m::RPick)(x, ps, st)
     y = x[:,:,:, m.pick]
@@ -228,17 +319,46 @@ struct PadCircular <: Lux.AbstractLuxLayer
     end
 end
 
-Lux.initialparameters(::AbstractRNG, m::PadCircular) = NamedTuple()
-Lux.initialstates(::AbstractRNG, m::PadCircular) = NamedTuple()
+Lux.initialparameters(::AbstractRNG, ::PadCircular) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::PadCircular) = NamedTuple()
 
 function (m::PadCircular)(x, ps, st)
     n_pad = m.n_pad
-    nx = size(x, 1)
     
     y = vcat(
         x[end-n_pad+1:end, :, :],
         x,
         x[1:n_pad, :, :]
+    )
+
+    return y, st
+end
+
+
+struct PadCircular2D <: Lux.AbstractLuxLayer
+    n_pad::Int
+
+    function PadCircular2D(n_filter::Int)
+        return new(n_filter ÷ 2)
+    end
+end
+
+Lux.initialparameters(::AbstractRNG, ::PadCircular2D) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::PadCircular2D) = NamedTuple()
+
+function (m::PadCircular2D)(x, ps, st)
+    n_pad = m.n_pad
+
+    y = vcat(
+        x[end-n_pad+1:end, :, :, :],
+        x,
+        x[1:n_pad, :, :, :]
+    )
+
+    y = hcat(
+        y[:, end-n_pad+1:end, :, :],
+        y,
+        y[:, 1:n_pad, :, :]
     )
 
     return y, st
@@ -253,12 +373,11 @@ struct RPadCircular <: Lux.AbstractLuxLayer
     end
 end
 
-Lux.initialparameters(::AbstractRNG, m::RPadCircular) = NamedTuple()
-Lux.initialstates(::AbstractRNG, m::RPadCircular) = NamedTuple()
+Lux.initialparameters(::AbstractRNG, ::RPadCircular) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RPadCircular) = NamedTuple()
 
 function (m::RPadCircular)(x, ps, st)
     n_pad = m.n_pad
-    nx = size(x, 1)
     
     y = vcat(
         x[end-n_pad+1:end, :, :, :],
@@ -275,7 +394,7 @@ struct RFluxConv{C} <: Lux.AbstractLuxLayer
 end
 
 function RFluxConv(kernel::AbstractArray)
-    return RFluxConv(StaticConv1D(kernel))
+    return RFluxConv(StaticConv(kernel))
 end
 
 Lux.initialparameters(rng::AbstractRNG, m::RFluxConv) = (conv=Lux.initialparameters(rng, m.conv),)
