@@ -66,7 +66,6 @@ struct BaseModelSmall{C} <: Lux.AbstractLuxLayer
 end
 
 function BaseModelSmall(n_filter, n_hidden)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
 
     main = Chain(
         PadCircular(n_filter),
@@ -113,20 +112,49 @@ function (m::BaseModelSmall2D)(x, ps, st)
 end
 
 
-# Custom convolution layer with static kernel
-struct StaticConv <: Lux.AbstractLuxLayer
-    kernel
+# Custom convolution layer with static kernel to conserve mass
+struct FluxConv{K} <: Lux.AbstractLuxLayer
+    kernel::K
 end
 
-function StaticConv(kernel::AbstractArray)
-    return StaticConv(() -> copy(kernel))
+function FluxConv()
+    kernel = reshape(Float32[0, -1, 1], :, 1, 1)
+    return FluxConv(() -> copy(kernel))
 end
 
-Lux.initialparameters(::AbstractRNG, ::StaticConv) = NamedTuple()
-Lux.initialstates(::AbstractRNG, layer::StaticConv) = (kernel = layer.kernel(),)
+Lux.initialparameters(::AbstractRNG, ::FluxConv) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::FluxConv) = (kernel = m.kernel(),)
 
-function (l::StaticConv)(x, ps, st)
+function (::FluxConv)(x, ps, st)
     y = NNlib.conv(x, st.kernel)
+    return y, st
+end
+
+
+struct FluxConv2D{K} <: Lux.AbstractLuxLayer
+    kernel::K
+end
+
+function FluxConv2D()
+    x_kernel = Float32[0  0 0;
+                       0 -1 1;
+                       0  0 0]
+
+    y_kernel = Float32[0  1 0;
+                       0 -1 0;
+                       0  0 0]
+
+    kernel = reshape(cat(x_kernel, y_kernel, dims=3), 3, 3, 2, 1)
+    return FluxConv2D(() -> copy(kernel))
+end
+
+Lux.initialparameters(::AbstractRNG, ::FluxConv2D) = NamedTuple()
+Lux.initialstates(::AbstractRNG, m::FluxConv2D) = (kernel = m.kernel(),)
+
+function (::FluxConv2D)(x, ps, st)
+    y_x = NNlib.conv(x[:,:,1:2,:], st.kernel)
+    y_y = NNlib.conv(x[:,:,3:4,:], st.kernel)
+    y = cat(y_x, y_y, dims=3)
     return y, st
 end
 
@@ -137,7 +165,6 @@ struct FluxModel{C} <: Lux.AbstractLuxLayer
 end
 
 function FluxModel(n_filter, n_hidden)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
 
     main = Chain(
         PadCircular(n_filter),
@@ -152,8 +179,8 @@ function FluxModel(n_filter, n_hidden)
         PadCircular(n_filter),
         Conv((n_filter,), n_hidden=>1),
 
-        PadCircular(size(div_kernel,1)),
-        StaticConv(div_kernel)
+        PadCircular(3),
+        FluxConv()
     )
 
     return FluxModel(SkipConnection(main, +))
@@ -173,23 +200,22 @@ struct FluxModel2D{C} <: Lux.AbstractLuxLayer
 end
 
 function FluxModel2D(n_filter, n_hidden)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
 
     main = Chain(
         PadCircular2D(n_filter),
-        Conv((n_filter,), 2=>n_hidden, swish),
+        Conv((n_filter,n_filter), 2=>n_hidden, swish),
 
         PadCircular2D(n_filter),
-        Conv((n_filter,), n_hidden=>n_hidden, swish),
+        Conv((n_filter,n_filter), n_hidden=>n_hidden, swish),
 
         PadCircular2D(n_filter),
-        Conv((n_filter,), n_hidden=>n_hidden, swish),
+        Conv((n_filter,n_filter), n_hidden=>n_hidden, swish),
         
         PadCircular2D(n_filter),
-        Conv((n_filter,), n_hidden=>2),
+        Conv((n_filter,n_filter), n_hidden=>4),
 
-        PadCircular2D(size(div_kernel,1)),
-        StaticConv(div_kernel)
+        PadCircular2D(3),
+        FluxConv2D()
     )
 
     return FluxModel2D(SkipConnection(main, +))
@@ -209,8 +235,6 @@ struct FluxModelSmall{C} <: Lux.AbstractLuxLayer
 end
 
 function FluxModelSmall(n_filter, n_hidden)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
-
     main = Chain(
         PadCircular(n_filter),
         Conv((n_filter,), 1=>n_hidden, swish),
@@ -218,8 +242,8 @@ function FluxModelSmall(n_filter, n_hidden)
         PadCircular(n_filter),
         Conv((n_filter,), n_hidden=>1),
 
-        PadCircular(size(div_kernel,1)),
-        StaticConv(div_kernel)
+        PadCircular(3),
+        FluxConv()
     )
 
     return FluxModelSmall(SkipConnection(main, +))
@@ -229,6 +253,35 @@ Lux.initialparameters(rng::AbstractRNG, m::FluxModelSmall) = (main=Lux.initialpa
 Lux.initialstates(rng::AbstractRNG, m::FluxModelSmall) = (main=Lux.initialstates(rng, m.main),)
 
 function (m::FluxModelSmall)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
+struct FluxModelSmall2D{C} <: Lux.AbstractLuxLayer
+    main::C
+end
+
+function FluxModelSmall2D(n_filter, n_hidden)
+
+    main = Chain(
+        PadCircular2D(n_filter),
+        Conv((n_filter,n_filter), 2=>n_hidden, swish),
+        
+        PadCircular2D(n_filter),
+        Conv((n_filter,n_filter), n_hidden=>4),
+
+        PadCircular2D(3),
+        FluxConv2D()
+    )
+
+    return FluxModelSmall2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::FluxModelSmall2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::FluxModelSmall2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::FluxModelSmall2D)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end
@@ -393,8 +446,8 @@ struct RFluxConv{C} <: Lux.AbstractLuxLayer
     conv::C
 end
 
-function RFluxConv(kernel::AbstractArray)
-    return RFluxConv(StaticConv(kernel))
+function RFluxConv()
+    return RFluxConv(FluxConv())
 end
 
 Lux.initialparameters(rng::AbstractRNG, m::RFluxConv) = (conv=Lux.initialparameters(rng, m.conv),)
@@ -449,7 +502,6 @@ struct EquiFluxModel{M} <: Lux.AbstractLuxLayer
 end
 
 function EquiFluxModel(n_filter::Int, n_hidden::Int)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
 
     main = Chain(
             RLift(),
@@ -466,8 +518,8 @@ function EquiFluxModel(n_filter::Int, n_hidden::Int)
             RPadCircular(n_filter),
             RConv((n_filter,), n_hidden => 1),
 
-            RPadCircular(size(div_kernel,1)),
-            RFluxConv(div_kernel),
+            RPadCircular(3),
+            RFluxConv(),
 
             RDrop()
         )
@@ -489,7 +541,6 @@ struct EquiFluxModelSmall{M} <: Lux.AbstractLuxLayer
 end
 
 function EquiFluxModelSmall(n_filter::Int, n_hidden::Int)
-    div_kernel = reshape(Float32[0, -1, 1], :, 1, 1)
 
     main = Chain(
             RLift(),
@@ -500,8 +551,8 @@ function EquiFluxModelSmall(n_filter::Int, n_hidden::Int)
             RPadCircular(n_filter),
             RConv((n_filter,), n_hidden => 1),
 
-            RPadCircular(size(div_kernel,1)),
-            RFluxConv(div_kernel),
+            RPadCircular(3),
+            RFluxConv(),
 
             RDrop()
         )
