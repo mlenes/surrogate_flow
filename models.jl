@@ -287,83 +287,6 @@ function (m::FluxModelSmall2D)(x, ps, st)
 end
 
 
-struct RLift <: Lux.AbstractLuxLayer
-end
-
-Lux.initialparameters(rng::AbstractRNG, ::RLift) = NamedTuple()
-Lux.initialstates(rng::AbstractRNG, ::RLift) = NamedTuple()
-
-function (m::RLift)(x, ps, st)
-    y = cat(x, -reverse(x, dims=1), dims=4)
-    return y, st
-end
-
-
-struct RConv{C} <: Lux.AbstractLuxLayer
-    conv::C
-end
-
-function RConv(kernel_size::Tuple, n_in_out::Pair, activation)
-    n_in, n_out = n_in_out
-    return RConv(Conv(kernel_size, n_in => n_out, activation))
-end
-
-function RConv(kernel_size::Tuple, n_in_out::Pair)
-    n_in, n_out = n_in_out
-    return RConv(Conv(kernel_size, n_in => n_out))
-end
-
-Lux.initialparameters(rng::AbstractRNG, m::RConv) = (conv=Lux.initialparameters(rng, m.conv),)
-Lux.initialstates(rng::AbstractRNG, m::RConv) = (conv=Lux.initialstates(rng, m.conv),)
-
-function (m::RConv)(x, ps, st)
-    y_e, st_conv = m.conv(x[:,:,:,1], ps.conv, st.conv)
-    y_r, st_conv = m.conv(x[:,:,:,2], ps.conv, st.conv)
-    y = cat(y_e, y_r, dims=4)
-    return y, (conv=st_conv,)
-end
-
-
-struct RSkipConnection{L} <: Lux.AbstractLuxLayer
-    layer::L
-end
-
-Lux.initialparameters(rng::AbstractRNG, m::RSkipConnection) = (layer=Lux.initialparameters(rng, m.layer),)
-Lux.initialstates(rng::AbstractRNG, m::RSkipConnection) = (layer=Lux.initialstates(rng, m.layer),)
-
-function (m::RSkipConnection)(x, ps, st)
-    y_e = m.layer(x[:,:,:,1], ps.layer, st.layer)[1] .+ x[:,:,:,1]
-    y_r = m.layer(x[:,:,:,2], ps.layer, st.layer)[1] .+ x[:,:,:,2]
-    y = cat(y_e, y_r, dims=4)
-    return y, (layer=st,)
-end
-
-
-struct RDrop <: Lux.AbstractLuxLayer
-end
-
-Lux.initialparameters(::AbstractRNG, ::RDrop) = NamedTuple()
-Lux.initialstates(::AbstractRNG, ::RDrop) = NamedTuple()
-
-function (m::RDrop)(x, ps, st)
-    y = 0.5f0(x[:,:,:, 1] .+ -reverse(x[:,:,:,2], dims=1))
-    return y, st
-end
-
-
-struct RPick <: Lux.AbstractLuxLayer
-    pick::Int
-end
-
-Lux.initialparameters(::AbstractRNG, ::RPick) = NamedTuple()
-Lux.initialstates(::AbstractRNG, ::RPick) = NamedTuple()
-
-function (m::RPick)(x, ps, st)
-    y = x[:,:,:, m.pick]
-    return y, st
-end
-
-
 struct PadCircular <: Lux.AbstractLuxLayer
     n_pad::Int
 
@@ -418,6 +341,134 @@ function (m::PadCircular2D)(x, ps, st)
 end
 
 
+struct RLift <: Lux.AbstractLuxLayer
+end
+
+Lux.initialparameters(::AbstractRNG, ::RLift) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RLift) = NamedTuple()
+
+function (::RLift)(x, ps, st)
+    y = cat(x, -reverse(x, dims=1), dims=4)
+    return y, st
+end
+
+
+function rotl90_2D(x::AbstractArray, k::Int)
+    k_mod = mod(k, 4)
+    if k_mod == 0
+        return x
+    elseif k_mod == 1
+        return reverse(permutedims(x, (2,1,3,4)), dims=1)
+    elseif k_mod == 2
+        return reverse(reverse(x, dims=1), dims=2)
+    elseif k_mod == 3
+        return reverse(permutedims(x, (2,1,3,4)), dims=2)
+    end
+end
+
+
+function VecRot90_2D(x::AbstractArray, k::Int)
+    k_mod = mod(k, 4)
+    rotated = rotl90_2D(x, k_mod)
+    if k_mod == 0
+        return rotated
+    elseif k_mod == 1
+        return cat(-rotated[:,:,2:2,:], rotated[:,:,1:1,:], dims=3)
+    elseif k_mod == 2
+        return cat(-rotated[:,:,1:1,:], -rotated[:,:,2:2,:], dims=3)
+    elseif k_mod == 3
+        return cat(rotated[:,:,2:2,:], -rotated[:,:,1:1,:], dims=3)
+    end
+end
+
+
+struct RLift2D <: Lux.AbstractLuxLayer
+end
+
+Lux.initialparameters(::AbstractRNG, ::RLift2D) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RLift2D) = NamedTuple()
+
+function (::RLift2D)(x, ps, st)
+    y = cat(x, VecRot90_2D(x, 1), VecRot90_2D(x, 2),  VecRot90_2D(x, 3), dims=5)
+    return y, st
+end
+
+
+struct RConv{C} <: Lux.AbstractLuxLayer
+    conv::C
+end
+
+function RConv(kernel_size::Tuple, n_in_out::Pair, activation)
+    n_in, n_out = n_in_out
+    return RConv(Conv(kernel_size, n_in => n_out, activation))
+end
+
+function RConv(kernel_size::Tuple, n_in_out::Pair)
+    n_in, n_out = n_in_out
+    return RConv(Conv(kernel_size, n_in => n_out))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::RConv) = (conv=Lux.initialparameters(rng, m.conv),)
+Lux.initialstates(rng::AbstractRNG, m::RConv) = (conv=Lux.initialstates(rng, m.conv),)
+
+function (m::RConv)(x, ps, st)
+    y_e, st_conv = m.conv(x[:,:,:,1], ps.conv, st.conv)
+    y_r, st_conv = m.conv(x[:,:,:,2], ps.conv, st.conv)
+    y = cat(y_e, y_r, dims=4)
+    return y, (conv=st_conv,)
+end
+
+
+struct RConv2D{C} <: Lux.AbstractLuxLayer
+    conv::C
+end
+
+function RConv2D(kernel_size::Tuple, n_in_out::Pair, activation)
+    n_in, n_out = n_in_out
+    return RConv2D(Conv(kernel_size, n_in => n_out, activation))
+end
+
+function RConv2D(kernel_size::Tuple, n_in_out::Pair)
+    n_in, n_out = n_in_out
+    return RConv2D(Conv(kernel_size, n_in => n_out))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::RConv2D) = (conv=Lux.initialparameters(rng, m.conv),)
+Lux.initialstates(rng::AbstractRNG, m::RConv2D) = (conv=Lux.initialstates(rng, m.conv),)
+
+function (m::RConv2D)(x, ps, st)
+    y_0,   st_conv = m.conv(x[:,:,:,:,1], ps.conv, st.conv)
+    y_90,  st_conv = m.conv(x[:,:,:,:,2], ps.conv, st.conv)
+    y_180, st_conv = m.conv(x[:,:,:,:,3], ps.conv, st.conv)
+    y_270, st_conv = m.conv(x[:,:,:,:,4], ps.conv, st.conv)
+    y = cat(y_0, y_90, y_180, y_270, dims=5)
+    return y, (conv=st_conv,)
+end
+
+
+struct RDrop <: Lux.AbstractLuxLayer
+end
+
+Lux.initialparameters(::AbstractRNG, ::RDrop) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RDrop) = NamedTuple()
+
+function (::RDrop)(x, ps, st)
+    y = 0.5f0(x[:,:,:, 1] .+ -reverse(x[:,:,:,2], dims=1))
+    return y, st
+end
+
+struct RDrop2D <: Lux.AbstractLuxLayer
+end
+
+Lux.initialparameters(::AbstractRNG, ::RDrop2D) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RDrop2D) = NamedTuple()
+
+function (::RDrop2D)(x, ps, st)
+    y = 0.25f0*sum([x[:,:,:,:,1], VecRot90_2D(x[:,:,:,:,2], 3), VecRot90_2D(x[:,:,:,:,3], 2), VecRot90_2D(x[:,:,:,:,4], 1)])
+    return y, st
+end
+
+
 struct RPadCircular <: Lux.AbstractLuxLayer
     n_pad::Int
 
@@ -442,6 +493,36 @@ function (m::RPadCircular)(x, ps, st)
 end
 
 
+struct RPadCircular2D <: Lux.AbstractLuxLayer
+    n_pad::Int
+
+    function RPadCircular2D(n_filter::Int)
+        return new(n_filter ÷ 2)
+    end
+end
+
+Lux.initialparameters(::AbstractRNG, ::RPadCircular2D) = NamedTuple()
+Lux.initialstates(::AbstractRNG, ::RPadCircular2D) = NamedTuple()
+
+function (m::RPadCircular2D)(x, ps, st)
+    n_pad = m.n_pad
+
+    y = vcat(
+        x[end-n_pad+1:end, :, :, :, :],
+        x,
+        x[1:n_pad, :, :, :, :]
+    )
+
+    y = hcat(
+        y[:, end-n_pad+1:end, :, :, :],
+        y,
+        y[:, 1:n_pad, :, :, :]
+    )
+
+    return y, st
+end
+
+
 struct RFluxConv{C} <: Lux.AbstractLuxLayer
     conv::C
 end
@@ -458,6 +539,28 @@ function (m::RFluxConv)(x, ps, st)
     y_r, st_conv = m.conv(x[:,:,:,2], ps.conv, st.conv)
 
     y = cat(y_e, y_r, dims=4)
+    return y, (conv=st_conv,)
+end
+
+
+struct RFluxConv2D{C} <: Lux.AbstractLuxLayer
+    conv::C
+end
+
+function RFluxConv2D()
+    return RFluxConv2D(FluxConv2D())
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::RFluxConv2D) = (conv=Lux.initialparameters(rng, m.conv),)
+Lux.initialstates(rng::AbstractRNG, m::RFluxConv2D) = (conv=Lux.initialstates(rng, m.conv),)
+
+function (m::RFluxConv2D)(x, ps, st)
+    y_0, st_conv   = m.conv(x[:,:,:,:,1], ps.conv, st.conv)
+    y_90, st_conv  = m.conv(x[:,:,:,:,2], ps.conv, st.conv)
+    y_180, st_conv = m.conv(x[:,:,:,:,3], ps.conv, st.conv)
+    y_270, st_conv = m.conv(x[:,:,:,:,4], ps.conv, st.conv)
+
+    y = cat(y_0, y_90, y_180, y_270, dims=5)
     return y, (conv=st_conv,)
 end
 
@@ -492,6 +595,41 @@ Lux.initialparameters(rng::AbstractRNG, m::EquiModel) = (main=Lux.initialparamet
 Lux.initialstates(rng::AbstractRNG, m::EquiModel) = (main=Lux.initialstates(rng, m.main),)
 
 function (m::EquiModel)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
+struct EquiModel2D{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function EquiModel2D(n_filter::Int, n_hidden::Int)
+    main = Chain(
+            RLift2D(),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), 2 => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => 2),
+
+            RDrop2D()
+        )
+
+    return EquiModel2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::EquiModel2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::EquiModel2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::EquiModel2D)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end
@@ -536,6 +674,45 @@ function (m::EquiFluxModel)(x, ps, st)
 end
 
 
+struct EquiFluxModel2D{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function EquiFluxModel2D(n_filter::Int, n_hidden::Int)
+
+    main = Chain(
+            RLift2D(),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), 2 => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => 4),
+
+            RPadCircular2D(3),
+            RFluxConv2D(),
+
+            RDrop2D()
+        )
+
+    return EquiFluxModel2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::EquiFluxModel2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::EquiFluxModel2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::EquiFluxModel2D)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
 struct EquiFluxModelSmall{M} <: Lux.AbstractLuxLayer
     main::M
 end
@@ -564,6 +741,39 @@ Lux.initialparameters(rng::AbstractRNG, m::EquiFluxModelSmall) = (main=Lux.initi
 Lux.initialstates(rng::AbstractRNG, m::EquiFluxModelSmall) = (main=Lux.initialstates(rng, m.main),)
 
 function (m::EquiFluxModelSmall)(x, ps, st)
+    y, newst = m.main(x, ps.main, st.main)
+    return y, (main=newst,)
+end
+
+
+struct EquiFluxModelSmall2D{M} <: Lux.AbstractLuxLayer
+    main::M
+end
+
+function EquiFluxModelSmall2D(n_filter::Int, n_hidden::Int)
+
+    main = Chain(
+            RLift2D(),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), 2 => n_hidden, swish),
+
+            RPadCircular2D(n_filter),
+            RConv2D((n_filter,n_filter), n_hidden => 4),
+
+            RPadCircular2D(3),
+            RFluxConv2D(),
+
+            RDrop2D()
+        )
+
+    return EquiFluxModelSmall2D(SkipConnection(main, +))
+end
+
+Lux.initialparameters(rng::AbstractRNG, m::EquiFluxModelSmall2D) = (main=Lux.initialparameters(rng, m.main),)
+Lux.initialstates(rng::AbstractRNG, m::EquiFluxModelSmall2D) = (main=Lux.initialstates(rng, m.main),)
+
+function (m::EquiFluxModelSmall2D)(x, ps, st)
     y, newst = m.main(x, ps.main, st.main)
     return y, (main=newst,)
 end;

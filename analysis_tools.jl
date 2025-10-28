@@ -82,7 +82,7 @@ function show_unrolling_heatmap(data_path, model, ps, st, Xμ, Xσ, save_path; d
 	        h_x_pred = heatmap(grid_x, grid_y, y_pred[t,:,:,1], title="u pred", clims=(min_u,max_u))
 	        h_y_true = heatmap(grid_x, grid_y, y_true[t,:,:,2], title="v target", clims=(min_v,max_v))
 	        h_y_pred = heatmap(grid_x, grid_y, y_pred[t,:,:,2], title="v pred", clims=(min_v,max_v))
-	        plot(h_x_true, h_x_pred, h_y_true, h_y_pred, layout=(4,1), size=(800,1600), xlabel="x", ylabel="y")
+	        plot(h_x_true, h_x_pred, h_y_true, h_y_pred, layout=(2,2), size=(1000,800), xlabel="x", ylabel="y")
 	    end
 	    gif(anim, save_path, fps=15)
 	end
@@ -124,7 +124,7 @@ function show_plots(data_path, model, ps, st, Xμ, Xσ, save_path; do_norm=true)
 	    pred_masses[i] = sum(y_pred[i,:])
 	end
 
-	p0 = plot(output_times, errors, xlabel="Time", ylabel="Error", label="MSE", title="Mean Squared Error in unrolled velocity")
+	p0 = plot(output_times, errors, xlabel="Time", ylabel="MSE", label="MSE", title="Mean Squared Error in unrolled velocity")
 	p1 = plot(output_times, true_masses, xlabel="Time", ylabel="Mass", label="Target")
 	plot!(p1, output_times, pred_masses, label="Unrolled", title="Mass conservation of Target and Unrolled prediction")
 	fig = plot(p0, p1, layout=(2,1), size=(800,800))
@@ -181,7 +181,7 @@ function show_plots_2D(data_path, model, ps, st, Xμ, Xσ, save_path; do_norm=tr
 		pred_masses_y[t] = sum(y_pred[t,:,:,2])
 	end
 
-	p0 = plot(times, errors_x, xlabel="Time", ylabel="Error", label="Err u", title="Mean Squared Error in unrolled velocity")
+	p0 = plot(times, errors_x, xlabel="Time", ylabel="MSE", label="Err u", title="Mean Squared Error in unrolled velocity")
 	plot!(p0, times, errors_y, label="Err v")
 	p1 = plot(times, true_masses_x, xlabel="Time", ylabel="Mass", label="Target u mass")
 	plot!(p1, times, pred_masses_x, label="Unrolled u mass", title="Mass conservation of Target and Unrolled prediction", linestyle=:dash)
@@ -394,5 +394,117 @@ function burgers_FV(nx, L, ν, k, u_mean, u_amplitude, noise_strength, t_end, cf
 	end
 
 	return solution
+end
+
+
+function burgers_FV_2D(nx, ny, Lx, Ly, ν, kx, ky, u_mean, u_amplitude, v_amplitude, noise_strength, t_end, cfl; nt=10000)
+	Δx=Lx/nx; Δy=Ly/ny
+
+	x = range(Δx/2, Lx - Δx/2, length=nx)
+	y = range(Δy/2, Ly - Δy/2, length=ny)
+
+	function initial_condition(x, y)
+	    u0 = [u_mean + u_amplitude * cos(kx * π * xi / Lx) * cos(ky * π * yi / Ly) for yi in y, xi in x]
+	    v0 = [u_amplitude * sin(kx * π * xi / Lx) * sin(ky * π * yi / Ly) for yi in y, xi in x]
+	    return u0, v0
+	end
+
+	u0, v0 = initial_condition(x, y)
+
+	Δt = t_end/nt
+
+	circshift2(u, sx, sy) = circshift(u, (sy, sx))
+
+	function convective_flux(u, v)
+	    nx, ny = size(u)
+	    dudt = zeros(nx, ny)
+	    dvdt = zeros(nx, ny)
+
+	    u_xp = circshift2(u, -1, 0)
+	    u_xm = circshift2(u, 1, 0)
+	    v_yp = circshift2(v, 0, -1)
+	    v_ym = circshift2(v, 0, 1)
+
+	    for j in 1:ny, i in 1:nx
+	        # x direction
+	        uL, uR = u[i,j], u_xp[i,j]
+	        alpha_x = max(abs(uL), abs(uR))
+	        flux_x_LR = 0.25(uL^2 + uR^2) - 0.5alpha_x*(uR - uL)
+
+	        uL_prev, uR_prev = u_xm[i,j], u[i,j]
+	        alpha_x_prev = max(abs(uL_prev), abs(uR_prev))
+	        flux_x_prev = 0.25(uL_prev^2 + uR_prev^2) - 0.5alpha_x_prev*(uR_prev - uL_prev)
+
+	        # y direction
+	        vL, vR = v[i,j], v_yp[i,j]
+	        alpha_y = max(abs(vL), abs(vR))
+	        flux_y_LR = 0.25(vL^2 + vR^2) - 0.5alpha_y*(vR - vL)
+
+	        vL_prev, vR_prev = v_ym[i,j], v[i,j]
+	        alpha_y_prev = max(abs(vL_prev), abs(vR_prev))
+	        flux_y_prev = 0.25(vL_prev^2 + vR_prev^2) - 0.5alpha_y_prev*(vR_prev - vL_prev)
+
+	        dudt[i,j] = (-1/Δx)*(flux_x_LR - flux_x_prev) + (-1/Δy)*(flux_y_LR - flux_y_prev)
+	        dvdt[i,j] = (-1/Δx)*(flux_x_LR - flux_x_prev) + (-1/Δy)*(flux_y_LR - flux_y_prev)
+	    end
+
+	    return dudt, dvdt
+	end
+
+	function diffusive_flux(u)
+	    u_xp = circshift2(u, -1, 0)
+	    u_xm = circshift2(u, 1, 0)
+	    u_yp = circshift2(u, 0, -1)
+	    u_ym = circshift2(u, 0, 1)
+	    return (ν/Δx^2)*(u_xp - 2u + u_xm) + (ν/Δy^2)*(u_yp - 2u + u_ym)
+	end
+
+	function R(u, v)
+	    du_conv, dv_conv = convective_flux(u, v)
+	    du_diff = diffusive_flux(u)
+	    dv_diff = diffusive_flux(v)
+	    return du_conv .+ du_diff, dv_conv .+ dv_diff
+	end
+
+	function rk3_step(u, v, Δt)
+	    k1u, k1v = R(u,v)
+	    u1 = u .+ Δt .* k1u
+	    v1 = v .+ Δt .* k1v
+
+	    k2u, k2v = R(u1, v1)
+	    u2 = 0.75u .+ 0.25(u1 .+ Δt .* k2u)
+	    v2 = 0.75v .+ 0.25(v1 .+ Δt .* k2v)
+
+	    k3u, k3v = R(u2, v2)
+	    u_next = (1/3)*u .+ (2/3)*(u2 .+ Δt .* k3u)
+	    v_next = (1/3)*v .+ (2/3)*(v2 .+ Δt .* k3v)
+
+	    return u_next, v_next
+	end
+
+	u = copy(u0)
+	v = copy(v0)
+	sol_u = [copy(u)]
+	sol_v = [copy(v)]
+
+	for n in 1:nt
+	    u, v = rk3_step(u, v, Δt)
+	    u .+= (rand(nx, ny) .- 0.5)*2*noise_strength
+	    v .+= (rand(nx, ny) .- 0.5)*2*noise_strength
+	    push!(sol_u, copy(u))
+	    push!(sol_v, copy(v))
+	end
+
+	dt_out_target = cfl * min(Δx, Δy) / abs(u_mean)
+	t_step = Int(floor(dt_out_target / Δt))
+
+	u_solution = []
+	v_solution = []
+	for t_idx in 1:t_step:length(sol_u)
+	    push!(u_solution, sol_u[t_idx])
+	    push!(v_solution, sol_v[t_idx])
+	end
+
+	return u_solution, v_solution
 end
 ;
